@@ -1,0 +1,16 @@
+{
+  "name": "agro-mind-chatbot-server",
+  "version": "1.0.0",
+  "description": "Servidor MCP de soporte para agricultores hidropónicos",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepare": "npm run build",
+    "inspect": "npx @modelcontextprotocol/inspector node build/index.js"
+  },
+  "keywords": ["mcp", "hydroponics", "agriculture", "chatbot"],
+  "author": "Tu Nombre",
+  "license":  "MIT"
+}
