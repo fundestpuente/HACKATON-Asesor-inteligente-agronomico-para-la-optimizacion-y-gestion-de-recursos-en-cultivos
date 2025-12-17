@@ -11,10 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from tensorflow.keras.models import load_model
 
-# 1. PERMITIR IMPORTAR DESDE LA CARPETA 'model'
+
 sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
 
-# --- IMPORTACIONES DE TUS SCRIPTS ---
+
 from model.weather_api import get_weather 
 from model.hydro_optimizer import HydroOptimizer
 from model.fertilizer_recommendation import recommend_fertilizer
@@ -32,52 +32,54 @@ app.add_middleware(
 
 print("\n--- INICIANDO CARGA DE MODELOS ---")
 
-# ================================================================
-# A. CARGAR MODELOS DE HIDROPONÍA
-# ================================================================
 try:
-    # Modelos pesados en training_models
-    hydro_model = load_model('training_models/hydro_model.keras')
     
-    # Herramientas ligeras en Artifacts
+    hydro_model = load_model('training_models/hydro_model.keras')
     scaler_num_hydro = joblib.load('Artifacts/scaler_num_hydro.joblib')
     encoder_cat_hydro = joblib.load('Artifacts/label_encoder_hydro.joblib')
     scaler_y_hydro = joblib.load('Artifacts/scaler_y_hydro.joblib')
-    
     optimizer = HydroOptimizer()
-    print("✅ Sistema Hidropónico: LISTO")
+    print("Sistema Hidropónico: LISTO")
+
 except Exception as e:
-    print(f"⚠️ Error cargando Hidroponía: {e}")
+    print(f"Error cargando Hidroponía: {e}")
     hydro_model = None
 
-# ================================================================
-# B. CARGAR MODELOS DE SUELO (FERTILIZANTES)
-# ================================================================
+
 try:
-    # Herramientas ligeras en Artifacts (SEGÚN TU ARBOL DE ARCHIVOS)
+    
     preprocessor_X_normal = joblib.load("Artifacts/preprocessor_X.joblib")
     scaler_y_normal = joblib.load("Artifacts/scaler_y.joblib")
-    
-    # Modelo pesado en training_models
     model_normal = tf.keras.models.load_model(
         "training_models/agromind_best.keras", 
         custom_objects={'r2_keras': lambda y, p: y} 
     )
-    print("✅ Sistema Suelo/Normal: LISTO")
+    
+    print("Sistema Suelo/Normal: LISTO")
+
 except Exception as e:
-    print(f"⚠️ Error cargando Sistema Normal: {e}")
+    print(f"Error cargando Sistema Normal: {e}")
     model_normal = None
 
 
-# ================================================================
-# DICCIONARIOS Y CLASES DE DATOS
-# ================================================================
 
-CROP_TRANSLATION_HYDRO = {
-    "rúcula": "arugula", "albahaca":"basil", "frijol":"bean", "cilantro":"cilantro",
-    "pepino":"cucumber", "berenjena":"eggplant", "lechuga":"lettuce", "melón":"melon",
-    "menta":"mint", "pak choi":"pak_choi", "pimiento":"pepper", "espinaca":"spinach",
-    "fresa":"strawberry", "tomate":"tomato", "calabacín":"zucchini"
+
+CROP_TRANSLATION = {
+    "rúcula": "arugula",
+    "albahaca":"basil",
+    "frijol":"bean",
+    "cilantro":"cilantro",
+    "pepino":"cucumber",
+    "berenjena":"eggplant",
+    "lechuga":"lettuce",
+    "melón":"melon",
+    "menta":"mint",
+    "pak choi":"pak_choi",
+    "pimiento":"pepper",
+    "espinaca":"spinach",
+    "fresa":"strawberry",
+    "tomate":"tomato",
+    "calabacín":"zucchini"
 }
 
 CROP_TRANSLATION_NORMAL = {
@@ -88,7 +90,7 @@ CROP_TRANSLATION_NORMAL = {
     "limon": "orange", "algodon": "cotton", "coco": "coconut"
 }
 
-class UserInputHydro(BaseModel):
+class UserInput(BaseModel):
     crop: str
     week: int
     tank_liters: float
@@ -102,7 +104,7 @@ class PredictionRequestNormal(BaseModel):
     latitud: float
     longitud: float
 
-# Función auxiliar para preparar datos de suelo
+
 def prepare_input_normal(crop, temperature, humidity, ph, rainfall):
     X_df = pd.DataFrame({
         "temperature": [temperature],
@@ -114,11 +116,7 @@ def prepare_input_normal(crop, temperature, humidity, ph, rainfall):
     return preprocessor_X_normal.transform(X_df)
 
 
-# ================================================================
-# ENDPOINTS (RUTAS DE LA API)
-# ================================================================
 
-# --- 1. DETECCIÓN DE ENFERMEDADES (IMAGEN) ---
 @app.post("/predict-image")
 async def predict_image_endpoint(file: UploadFile = File(...)):
     try:
@@ -126,7 +124,7 @@ async def predict_image_endpoint(file: UploadFile = File(...)):
         with open(temp_filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Llamamos a plant_classifier.py
+        
         resultado = predict_disease(temp_filename)
         
         if os.path.exists(temp_filename):
@@ -136,52 +134,79 @@ async def predict_image_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# --- 2. RECETA HIDROPÓNICA ---
+
 @app.post("/generate-recipe")
-def generate_recipe(data: UserInputHydro):
-    if not hydro_model:
-        raise HTTPException(status_code=500, detail="Modelo Hidropónico no cargado.")
+def generate_recipe(data: UserInput):
 
     weather_data = get_weather(data.lat, data.long)
-    if not weather_data: weather_data = {"temperature": 20.0, "humidity": 60.0}
+
+    if not weather_data:
+        weather_data = {"temperature": 20.0, "humidity": 60.0}
     
     temp = weather_data["temperature"]
     humidity = weather_data["humidity"]
-    
+
     crop_input = data.crop.lower().strip()
-    crop_model_name = CROP_TRANSLATION_HYDRO.get(crop_input, crop_input)
-    
+    crop_model_name = CROP_TRANSLATION.get(crop_input, crop_input)
+
     climate_interaction = temp * humidity
     input_num  = np.array([[temp, humidity, data.ph_water, data.week, climate_interaction]])
 
-    input_num_processed = scaler_num_hydro.transform(input_num) if scaler_num_hydro else input_num
+    if scaler_num_hydro:
+        input_num_processed = scaler_num_hydro.transform(input_num)
+    else:
+        input_num_processed = input_num
     
-    try: crop_idx = encoder_cat_hydro.transform([data.crop])
-    except: crop_idx = np.array([0])
-    
-    pred_scaled = hydro_model.predict([input_num_processed, crop_idx], verbose=0)
-    pred_real = scaler_y_hydro.inverse_transform(pred_scaled)[0]
+    try:
+        crop_idx = encoder_cat_hydro.transform([data.crop])
+    except:
+        crop_idx = np.array([0])
 
-    n_req, p_req, k_req, ec_target = pred_real[0], pred_real[1], pred_real[2], pred_real[3]
+    
+    if hydro_model:
+        pred_scaled = hydro_model.predict([input_num_processed, crop_idx], verbose=0)
+        pred_real = scaler_y_hydro.inverse_transform(pred_scaled)[0]
+
+        n_req, p_req, k_req = pred_real[0], pred_real[1], pred_real[2]
+        ec_target = pred_real[3]
+    else:
+        n_req, p_req, k_req, ec_target = 999, 999, 999, 999.0
 
     recipe_items = optimizer.calculate_recipe(
-        targets={"N": float(n_req), "P": float(p_req), "K": float(k_req), "EC": float(ec_target)},
-        water_liters=data.tank_liters
-    )
+        targets={
+            "N": float(n_req),
+            "P": float(p_req),
+            "K": float(k_req),
+            "EC": float(ec_target)
+    },
+    water_liters=data.tank_liters)
 
-    if not recipe_items: 
-        raise HTTPException(status_code = 400, detail= "No se pudo calcular mezcla viable.")
-     
-    return {
+    if recipe_items is None or len(recipe_items) == 0:
+        raise HTTPException(status_code = 400, detail= "No se pudo calcular una mezcla viable.")
+    
+    response = {
         "status": "success",
-        "tank_info": { "volume": data.tank_liters, "crop": data.crop },
-        "environment": { "temperature": temp, "humidity": humidity },
-        "meta": { "target_ppm": {"N": float(n_req), "P": float(p_req), "K": float(k_req)}, "target_ec": float(ec_target) },
+        "tank_info": {
+            "volume": data.tank_liters,
+            "crop": data.crop,
+            "crop_model": crop_model_name
+        },
+        "environment": {
+            "temperature": temp,
+            "humidity": humidity,
+            "source": "WeatherAPI" if weather_data else "Default"
+        },
+        "meta": {
+            "target_ppm": {"N": float(n_req), "P": float(p_req), "K": float(k_req)},
+            "target_ec": float(ec_target)
+        },
         "mix_A": [item for item in recipe_items if item['tank_type'] == 'A'],
         "mix_B": [item for item in recipe_items if item['tank_type'] == 'B']
     }
 
-# --- 3. RECOMENDACIÓN FERTILIZANTE (SUELO) ---
+    return response
+
+
 @app.post("/predict")
 def predict_fertilizer(request: PredictionRequestNormal):
     if not model_normal:
